@@ -10,6 +10,8 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    and_,
+    or_,
     type_coerce,
 )
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -22,6 +24,7 @@ from sqlalchemy.orm import (
 
 from polar.kit.db.models import RecordModel
 from polar.kit.extensions.sqlalchemy import PostgresUUID
+from polar.kit.utils import utc_now
 
 if TYPE_CHECKING:
     from polar.models import SubscriptionTier, User
@@ -92,14 +95,32 @@ class Subscription(RecordModel):
 
     @hybrid_property
     def active(self) -> bool:
-        return self.status in [SubscriptionStatus.trialing, SubscriptionStatus.active]
+        if self.status in [SubscriptionStatus.trialing, SubscriptionStatus.active]:
+            return True
+
+        if (
+            self.status == SubscriptionStatus.canceled
+            and self.ended_at
+            and self.ended_at > utc_now()
+        ):
+            return True
+
+        return False
 
     @active.inplace.expression
     @classmethod
     def _active_expression(cls) -> ColumnElement[bool]:
-        return type_coerce(
-            cls.status.in_([SubscriptionStatus.trialing, SubscriptionStatus.active]),
-            Boolean,
+        return or_(
+            type_coerce(
+                cls.status.in_(
+                    [SubscriptionStatus.trialing, SubscriptionStatus.active]
+                ),
+                Boolean,
+            ),
+            and_(
+                Subscription.status == SubscriptionStatus.canceled,
+                Subscription.ended_at > utc_now(),
+            ),
         )
 
     @hybrid_property
